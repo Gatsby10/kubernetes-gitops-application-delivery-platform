@@ -1,0 +1,108 @@
+pipeline {
+    agent any
+    tools {
+        terraform 'terraform'
+    }
+    parameters {
+        choice(name: 'action', choices: ['apply', 'destroy'], description: 'Select the action to perform')
+    }
+    triggers {
+        pollSCM('* * * * *')  // Every 5 minutes (not every minute)
+    }
+    environment {
+        SLACKCHANNEL = '29th-june-2026-sock-shop-e-commerce-project-eu-team1'
+        SLACKCREDENTIALS = credentials('slack')
+    }
+   
+    stages {
+        // stage('IAC Security Scan') {
+        //     steps {
+        //         script {
+        //             sh 'sudo pip3 install checkov --quiet'
+                   
+        //             // Run scan with soft-fail - reports issues but doesn't fail pipeline
+        //             sh script: '''
+        //                 checkov -d . \
+        //                     -o junit \
+        //                     --output-file-path . \
+        //                     --soft-fail \
+        //                     --quiet \
+        //                     --framework terraform
+        //             ''', returnStatus: true
+                   
+        //             // Publish results to Jenkins UI
+        //             junit allowEmptyResults: true, testResults: 'results_junit.xml'
+                   
+        //             // Generate and archive JSON report
+        //             sh 'checkov -d . -o json --output-file checkov-report.json --soft-fail --quiet'
+        //             archiveArtifacts artifacts: 'checkov-report.json', allowEmptyArchive: true
+                   
+        //             echo "✅ Checkov scan completed. Reports available in Jenkins UI."
+        //         }
+        //     }
+        // }
+       
+        stage('Create tfvars') {
+            steps {
+                withCredentials([usernamePassword(
+                    credentialsId: 'git-creds',
+                    usernameVariable: 'GITHUB_USERNAME',
+                    passwordVariable: 'GITHUB_PASSWORD'
+                )]) {
+                    writeFile file: 'terraform.tfvars', text: """github_username = "${GITHUB_USERNAME}"
+github_password = "${GITHUB_PASSWORD}"
+"""
+ 
+ 
+                    sh 'ls -la'
+                    sh 'cat terraform.tfvars'
+                }
+            }
+        }
+       
+        stage('Terraform Init') {
+            steps {
+                sh 'terraform init'
+            }
+        }
+       
+        stage('Terraform format') {
+            steps {
+                sh 'terraform fmt --recursive'
+            }
+        }
+       
+        stage('Terraform validate') {
+            steps {
+                sh 'terraform validate'
+            }
+        }
+       
+        stage('Terraform plan') {
+            steps {
+                sh 'terraform plan'
+            }
+        }
+       
+        stage('Terraform action') {
+            steps {
+                script {
+                    sh "terraform ${params.action} -auto-approve"
+                }
+            }
+        }
+    }
+   
+    post {
+        always {
+            script {
+                slackSend(
+                    channel: SLACKCHANNEL,
+                    color: currentBuild.result == 'SUCCESS' ? 'good' : 'danger',
+                    message: "Job '${env.JOB_NAME} [${env.BUILD_NUMBER}]' (${env.BUILD_URL}) has been completed."
+                )
+            }
+            cleanWs()  // Clean workspace
+        }
+    }
+}
